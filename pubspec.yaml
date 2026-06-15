@@ -1,0 +1,35 @@
+name: payflow
+description: "PayFlow — Premium Flutter payment app with UPI, QR scanning, contact sync, and Firebase auth."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  google_fonts: ^6.2.1
+  flutter_animate: ^4.5.0
+  qr_flutter: ^4.1.0
+  intl: ^0.19.0
+  smooth_page_indicator: ^1.2.0+3
+  shared_preferences: ^2.3.2
+  mobile_scanner: ^5.2.3
+  flutter_contacts: ^1.1.9+1
+  permission_handler: ^11.3.1
+  firebase_core: ^4.10.0
+  firebase_auth: ^6.5.2
+  firebase_auth_platform_interface: ^9.0.2
+  cloud_firestore: ^6.5.0
+  js: ^0.6.7
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/avatars/

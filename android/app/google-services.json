@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "607041989085",
+    "project_id": "fixitup-c9036",
+    "storage_bucket": "fixitup-c9036.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:607041989085:android:1f876512f2259420776e34",
+        "android_client_info": {
+          "package_name": "com.payflow.payflow"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDOKaLjx0AamkNmGHg3FN_dZ_h4dT6pDXQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
