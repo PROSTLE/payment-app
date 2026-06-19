@@ -8,6 +8,7 @@ import '../models/contact_model.dart';
 import '../models/saved_card_model.dart';
 import '../models/transaction_model.dart';
 import '../services/auth_service.dart';
+import '../services/razorpay_service.dart';
 import '../widgets/swipe_to_pay_slider.dart';
 import 'success_screen.dart';
 
@@ -158,8 +159,35 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
       );
       return;
     }
-    final card = _cards[_selectedCardIndex];
 
+    // Check sufficient balance before showing sheet
+    final balance = AuthService.instance.balance;
+    if (_amount > balance) {
+      HapticFeedback.heavyImpact();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.account_balance_wallet_outlined,
+                  color: Colors.white, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Insufficient balance. Available: ₹${balance.toStringAsFixed(0)}',
+                  style: GoogleFonts.inter(color: Colors.white, fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: kRed,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
+    final card = _cards[_selectedCardIndex];
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -169,28 +197,46 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
         recipient: widget.recipient,
         card: card,
         upiId: _upiMode ? _upiCtrl.text.trim() : widget.upiId,
-        onConfirmed: _processPayment,
+        onConfirmed: _initiateRazorpayPayment,
       ),
     );
   }
 
-  void _processPayment() {
-    // Mock: Deduct from in-memory transaction list and navigate to success
-    final txId = 'TX${DateTime.now().millisecondsSinceEpoch}';
-    mockTransactions.insert(
-      0,
-      TransactionModel(
-        id: txId,
-        vendor: widget.recipient.name,
-        category: 'Transfer',
-        amount: _amount,
-        type: TransactionType.debit,
-        date: DateTime.now(),
-        icon: Icons.send_rounded,
-        iconColor: kGreen,
-      ),
+  void _initiateRazorpayPayment() {
+    Navigator.pop(context); // close sheet first
+    setState(() => _loading = true);
+
+    final user = AuthService.instance.currentUser;
+    final phone = user?.phone ?? '+919999999999';
+    final email = user?.email ?? 'user@payflow.com';
+    final name = user?.fullName ?? 'PayFlow User';
+
+    RazorpayService.instance.checkout(
+      amountInPaise: (_amount * 100).round(),
+      contactPhone: phone,
+      contactEmail: email,
+      contactName: name,
+      description: 'Payment to ${widget.recipient.name}',
+      upiId: _upiMode ? _upiCtrl.text.trim() : widget.upiId,
+      onSuccess: (paymentId, orderId) => _onPaymentSuccess(paymentId),
+      onError: (message) => _onPaymentError(message),
+    );
+  }
+
+  Future<void> _onPaymentSuccess(String paymentId) async {
+    // Deduct balance
+    await AuthService.instance.deductBalance(_amount);
+    // Record transaction
+    AuthService.instance.recordTransaction(
+      vendor: widget.recipient.name,
+      amount: _amount,
+      type: TransactionType.debit,
     );
 
+    if (!mounted) return;
+    setState(() => _loading = false);
+
+    final txId = paymentId.isNotEmpty ? paymentId : 'TX${DateTime.now().millisecondsSinceEpoch}';
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 600),
@@ -201,6 +247,22 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
         ),
         transitionsBuilder: (_, anim, __, child) =>
             FadeTransition(opacity: anim, child: child),
+      ),
+    );
+  }
+
+  void _onPaymentError(String message) {
+    if (!mounted) return;
+    setState(() => _loading = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Payment failed: $message',
+          style: GoogleFonts.inter(color: Colors.white),
+        ),
+        backgroundColor: kRed,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
       ),
     );
   }
@@ -628,11 +690,25 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
 
 // ─── Payment Confirmation Bottom Sheet ────────────────────────────────────────
 
-class _PaymentConfirmSheet extends StatelessWidget {
+double _carbonGrams(double amount, String category) {
+  const factors = {
+    'Food': 0.8,
+    'Transport': 1.2,
+    'Entertainment': 0.4,
+    'Subscription': 0.3,
+    'Investment': 0.1,
+    'Music': 0.3,
+  };
+  final factor = factors[category] ?? 0.5;
+  return amount * factor;
+}
+
+class _PaymentConfirmSheet extends StatefulWidget {
   final double amount;
   final ContactModel recipient;
   final SavedCardModel card;
   final String? upiId;
+  final String category;
   final VoidCallback onConfirmed;
 
   const _PaymentConfirmSheet({
@@ -640,12 +716,26 @@ class _PaymentConfirmSheet extends StatelessWidget {
     required this.recipient,
     required this.card,
     this.upiId,
+    this.category = 'Transfer',
     required this.onConfirmed,
   });
 
   @override
+  State<_PaymentConfirmSheet> createState() => _PaymentConfirmSheetState();
+}
+
+class _PaymentConfirmSheetState extends State<_PaymentConfirmSheet> {
+  bool _offsetAdded = false;
+
+  @override
   Widget build(BuildContext context) {
     final txRef = 'PF${DateTime.now().millisecondsSinceEpoch % 100000}';
+    final carbonG = _carbonGrams(widget.amount, widget.category);
+    final carbonDisplay = carbonG >= 1000
+        ? '${(carbonG / 1000).toStringAsFixed(2)} kg'
+        : '${carbonG.toStringAsFixed(0)} g';
+    final offsetCost = ((carbonG / 1000).ceil() * 10).clamp(1, 999);
+    final totalAmount = widget.amount + (_offsetAdded ? offsetCost : 0);
 
     return Container(
       decoration: const BoxDecoration(
@@ -681,14 +771,14 @@ class _PaymentConfirmSheet extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: kGreen.withOpacity(0.12),
+              color: kGreen.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: kGreen.withOpacity(0.25)),
+              border: Border.all(color: kGreen.withValues(alpha: 0.25)),
             ),
             child: Column(
               children: [
                 Text(
-                  '₹ ${amount.toStringAsFixed(amount % 1 == 0 ? 0 : 2)}',
+                  '₹ ${totalAmount.toStringAsFixed(totalAmount % 1 == 0 ? 0 : 2)}',
                   style: GoogleFonts.inter(
                     color: kGreen,
                     fontSize: 44,
@@ -705,11 +795,11 @@ class _PaymentConfirmSheet extends StatelessWidget {
                       height: 28,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: recipient.avatarColor,
+                        color: widget.recipient.avatarColor,
                       ),
                       child: Center(
                         child: Text(
-                          recipient.initials[0],
+                          widget.recipient.initials[0],
                           style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
@@ -719,7 +809,7 @@ class _PaymentConfirmSheet extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      'to ${recipient.name}',
+                      'to ${widget.recipient.name}',
                       style: GoogleFonts.inter(
                         color: Colors.white70,
                         fontSize: 15,
@@ -734,11 +824,11 @@ class _PaymentConfirmSheet extends StatelessWidget {
           // Details
           _DetailRow(
             label: 'To',
-            value: upiId ?? recipient.username,
+            value: widget.upiId ?? widget.recipient.username,
           ),
           _DetailRow(
             label: 'From',
-            value: '${card.brand.toUpperCase()} ···· ${card.last4}',
+            value: '${widget.card.brand.toUpperCase()} ···· ${widget.card.last4}',
           ),
           _DetailRow(
             label: 'Ref. No.',
@@ -749,14 +839,79 @@ class _PaymentConfirmSheet extends StatelessWidget {
             value: 'Instant Transfer',
             valueColor: kGreen,
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 12),
+          // ── Carbon Intelligence ──
+          GestureDetector(
+            onTap: () => setState(() => _offsetAdded = !_offsetAdded),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: _offsetAdded
+                    ? const Color(0xFF1A3A2A)
+                    : const Color(0xFF1A2A1A),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _offsetAdded
+                      ? kGreen.withValues(alpha: 0.6)
+                      : kGreen.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Text('🌱', style: const TextStyle(fontSize: 18)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '~$carbonDisplay CO₂ estimated',
+                          style: GoogleFonts.inter(
+                              color: kGreen,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600),
+                        ),
+                        Text(
+                          _offsetAdded
+                              ? 'Offset added ✓ +₹$offsetCost'
+                              : 'Tap to offset for +₹$offsetCost',
+                          style: GoogleFonts.inter(
+                              color: _offsetAdded
+                                  ? kGreen
+                                  : const Color(0xFF5A6373),
+                              fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 20,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _offsetAdded ? kGreen : Colors.transparent,
+                      border: Border.all(
+                          color: _offsetAdded ? kGreen : const Color(0xFF5A6373),
+                          width: 1.5),
+                    ),
+                    child: _offsetAdded
+                        ? const Icon(Icons.check, size: 12, color: Colors.black)
+                        : null,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
           // Confirm button
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
               onPressed: () {
                 Navigator.pop(context); // close sheet
-                onConfirmed();
+                widget.onConfirmed();
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: kGreen,
@@ -767,7 +922,7 @@ class _PaymentConfirmSheet extends StatelessWidget {
                 elevation: 0,
               ),
               child: Text(
-                'Pay ₹${amount.toStringAsFixed(amount % 1 == 0 ? 0 : 2)}',
+                'Pay ₹${totalAmount.toStringAsFixed(totalAmount % 1 == 0 ? 0 : 2)}',
                 style: GoogleFonts.inter(
                   color: Colors.black,
                   fontSize: 17,

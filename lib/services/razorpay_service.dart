@@ -3,15 +3,33 @@ import 'razorpay/razorpay_stub.dart'
     if (dart.library.js_util) 'razorpay/razorpay_web.dart'
     if (dart.library.io) 'razorpay/razorpay_mobile.dart';
 
+export 'razorpay/razorpay_base.dart'
+    show PaymentSuccessCallback, PaymentErrorCallback;
+
 class RazorpayService {
   static RazorpayService? _instance;
   static RazorpayService get instance => _instance ??= RazorpayService._();
   RazorpayService._();
 
   final RazorpayServiceBase _delegate = RazorpayServiceImpl();
+  bool _initialized = false;
 
-  void init() => _delegate.init();
-  void dispose() => _delegate.dispose();
+  void _ensureInit() {
+    if (!_initialized) {
+      _delegate.init();
+      _initialized = true;
+    }
+  }
+
+  void init() {
+    _delegate.init();
+    _initialized = true;
+  }
+
+  void dispose() {
+    _delegate.dispose();
+    _initialized = false;
+  }
 
   void checkout({
     required int amountInPaise,
@@ -23,6 +41,7 @@ class RazorpayService {
     PaymentSuccessCallback? onSuccess,
     PaymentErrorCallback? onError,
   }) {
+    _ensureInit();
     _delegate.checkout(
       amountInPaise: amountInPaise,
       contactPhone: contactPhone,
@@ -42,6 +61,7 @@ class RazorpayService {
     PaymentSuccessCallback? onSuccess,
     PaymentErrorCallback? onError,
   }) {
+    _ensureInit();
     _delegate.openCardValidation(
       contactPhone: contactPhone,
       contactEmail: contactEmail,

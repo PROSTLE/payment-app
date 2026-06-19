@@ -6,6 +6,7 @@ import '../constants/colors.dart';
 import '../models/transaction_model.dart';
 import '../models/contact_model.dart';
 import '../widgets/glassmorphic_card.dart';
+import '../widgets/cash_flow_forecast_widget.dart';
 import 'recipients_screen.dart';
 import 'receive_qr_screen.dart';
 import '../models/saved_card_model.dart';
@@ -24,11 +25,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       DraggableScrollableController();
   List<SavedCardModel> _userCards = [];
   bool _loadingCards = true;
+  double _balance = 0;
+  double _spending = 0;
 
   @override
   void initState() {
     super.initState();
     _loadUserCards();
+    _loadBalanceData();
   }
 
   Future<void> _loadUserCards() async {
@@ -37,6 +41,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() {
         _userCards = cards;
         _loadingCards = false;
+      });
+    }
+  }
+
+  void _loadBalanceData() {
+    if (mounted) {
+      final user = AuthService.instance.currentUser;
+      final now = DateTime.now();
+      double spending = 0;
+      for (final tx in mockTransactions) {
+        if (!tx.isCredit && tx.date.month == now.month && tx.date.year == now.year) {
+          spending += tx.amount;
+        }
+      }
+      setState(() {
+        _balance = user?.balance ?? 0;
+        _spending = spending;
       });
     }
   }
@@ -54,7 +75,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               SliverToBoxAdapter(child: _buildBalanceSection()),
               SliverToBoxAdapter(child: _buildActionButtons()),
               SliverToBoxAdapter(child: _buildSpendingSection()),
-              const SliverToBoxAdapter(child: SizedBox(height: 320)),
+              SliverToBoxAdapter(
+                child: CashFlowForecastWidget(transactions: mockTransactions),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 360)),
             ],
           ),
           // Bottom sliding transactions sheet
@@ -113,6 +137,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildBalanceSection() {
+    final wholeRupees = _balance.floor();
+    final paiseStr = ((_balance - wholeRupees) * 100).round().toString().padLeft(2, '0');
+    final formattedWhole = wholeRupees.toString().replaceAllMapped(
+      RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
+      (m) => '${m[1]},',
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
       child: Column(
@@ -131,7 +161,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                '₹ 7,854',
+                '₹ $formattedWhole',
                 style: GoogleFonts.inter(
                   color: kTextPrimary,
                   fontSize: 44,
@@ -142,7 +172,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text(
-                  '.43',
+                  '.$paiseStr',
                   style: GoogleFonts.inter(
                     color: kTextSecondary,
                     fontSize: 24,
@@ -153,7 +183,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          // Mini card preview strip
           _buildCardStrip(),
         ],
       ),
@@ -293,6 +322,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildSpendingSection() {
+    final spendingStr = _spending >= 1000
+        ? '₹${(_spending / 1000).toStringAsFixed(1)}K'
+        : '₹${_spending.toStringAsFixed(0)}';
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
       child: GlassmorphicCard(
@@ -309,7 +341,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '₹1,385',
+                  spendingStr,
                   style: GoogleFonts.inter(
                     color: kTextPrimary,
                     fontSize: 22,
@@ -319,7 +351,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
             const Spacer(),
-            // Bar chart preview
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [65, 90, 45, 75, 55, 100, 70]
@@ -328,9 +359,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         height: h * 0.5,
                         margin: const EdgeInsets.only(left: 4),
                         decoration: BoxDecoration(
-                          color: h == 100
-                              ? kGreen
-                              : kSurface2,
+                          color: h == 100 ? kGreen : kSurface2,
                           borderRadius: BorderRadius.circular(3),
                         ),
                       ))

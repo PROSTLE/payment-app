@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import '../constants/colors.dart';
 import '../models/contact_model.dart';
+import '../services/upi_parser.dart';
 import 'calculator_send_screen.dart';
 
 class RecipientsScreen extends StatefulWidget {
@@ -73,26 +75,76 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
               fontWeight: FontWeight.w700,
             ),
           ),
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-            decoration: BoxDecoration(
-              color: kSurface1,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: kDivider),
-            ),
-            child: Text(
-              '+ Add',
-              style: GoogleFonts.inter(
-                color: kTextSecondary,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
+          // QR Scanner button
+          GestureDetector(
+            onTap: _openQrScanner,
+            child: Container(
+              padding: const EdgeInsets.all(9),
+              decoration: BoxDecoration(
+                color: kSurface1,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: kDivider),
               ),
+              child: const Icon(Icons.qr_code_scanner,
+                  color: kTextPrimary, size: 20),
             ),
           ),
         ],
       ),
     ).animate().fadeIn();
+  }
+
+  void _openQrScanner() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (ctx) => _QrScannerPage(
+          onScanned: (String rawCode) {
+            Navigator.pop(ctx);
+            final payload = UpiParser.parse(rawCode);
+            if (payload == null || !payload.isValid) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Invalid QR code — not a UPI payment code',
+                      style: GoogleFonts.inter(color: Colors.white)),
+                  backgroundColor: kRed,
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+              return;
+            }
+            final parts = payload.vpa.split('@');
+            final name = payload.name.isNotEmpty ? payload.name
+                : (parts[0].isNotEmpty
+                    ? parts[0][0].toUpperCase() + parts[0].substring(1)
+                    : 'UPI Recipient');
+            final contact = ContactModel(
+              id: payload.vpa,
+              name: name,
+              username: payload.vpa,
+              bank: parts.length > 1 ? parts[1].toUpperCase() : 'UPI',
+              initials: name[0].toUpperCase(),
+              avatarColor: kCardMint[0],
+            );
+            Navigator.of(context).push(
+              PageRouteBuilder(
+                transitionDuration: const Duration(milliseconds: 350),
+                pageBuilder: (_, __, ___) => CalculatorSendScreen(
+                  recipient: contact,
+                  upiId: payload.vpa,
+                  prefilledAmount: payload.amount,
+                ),
+                transitionsBuilder: (_, anim, __, child) => SlideTransition(
+                  position: Tween<Offset>(
+                      begin: const Offset(0, 1), end: Offset.zero)
+                      .animate(CurvedAnimation(parent: anim, curve: Curves.easeOut)),
+                  child: child,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   // UPI quick-send row: user types a UPI ID and goes straight to amount entry
@@ -389,6 +441,116 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
                       CurvedAnimation(parent: anim, curve: Curves.easeOut)),
           child: child,
         ),
+      ),
+    );
+  }
+}
+
+// ─── QR Scanner Page ──────────────────────────────────────────────────────────
+
+class _QrScannerPage extends StatefulWidget {
+  final void Function(String rawCode) onScanned;
+  const _QrScannerPage({required this.onScanned});
+
+  @override
+  State<_QrScannerPage> createState() => _QrScannerPageState();
+}
+
+class _QrScannerPageState extends State<_QrScannerPage> {
+  final MobileScannerController _ctrl = MobileScannerController();
+  bool _scanned = false;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          MobileScanner(
+            controller: _ctrl,
+            onDetect: (capture) {
+              if (_scanned) return;
+              final barcodes = capture.barcodes;
+              if (barcodes.isEmpty) return;
+              final raw = barcodes.first.rawValue;
+              if (raw == null || raw.isEmpty) return;
+              _scanned = true;
+              widget.onScanned(raw);
+            },
+          ),
+          // Overlay
+          SafeArea(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  child: Row(
+                    children: [
+                      GestureDetector(
+                        onTap: () => Navigator.pop(context),
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.close,
+                              color: Colors.white, size: 20),
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        'Scan UPI QR Code',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: () => _ctrl.toggleTorch(),
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.flashlight_on,
+                              color: Colors.white, size: 20),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                // Scan guide box
+                Container(
+                  width: 240,
+                  height: 240,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.greenAccent, width: 2),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Point camera at UPI QR code',
+                  style: TextStyle(color: Colors.white70, fontSize: 14),
+                ),
+                const Spacer(),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

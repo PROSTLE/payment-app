@@ -1,3 +1,5 @@
+import '../models/contact_model.dart';
+
 class UserModel {
   final String id;
   final String fullName;
@@ -5,6 +7,8 @@ class UserModel {
   final String email;
   String pin;
   bool contactsSynced;
+  double balance;
+  List<ContactModel> syncedContacts;
 
   UserModel({
     required this.id,
@@ -13,6 +17,8 @@ class UserModel {
     required this.email,
     required this.pin,
     this.contactsSynced = false,
+    this.balance = 50000.00,
+    this.syncedContacts = const [],
   });
 
   Map<String, dynamic> toJson() => {
@@ -22,6 +28,7 @@ class UserModel {
         'email': email,
         'pin': pin,
         'contactsSynced': contactsSynced,
+        'balance': balance,
       };
 
   factory UserModel.fromJson(Map<String, dynamic> json) => UserModel(
@@ -31,6 +38,7 @@ class UserModel {
         email: json['email'] ?? '',
         pin: json['pin'] ?? '',
         contactsSynced: json['contactsSynced'] ?? false,
+        balance: (json['balance'] as num?)?.toDouble() ?? 50000.00,
       );
 
   String get initials {

@@ -1,14 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart' show Color, Icons;
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_auth_platform_interface/firebase_auth_platform_interface.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
 import '../models/saved_card_model.dart';
-
-enum OtpMethod { sms, whatsapp, email }
+import '../models/contact_model.dart';
+import '../models/transaction_model.dart';
+import '../constants/colors.dart' show kGreen;
 
 class AuthService {
   static AuthService? _instance;
@@ -21,16 +21,6 @@ class AuthService {
   UserModel? _currentUserData;
   UserModel? get currentUser => _currentUserData;
 
-  // Mobile OTP flow
-  String? _verificationId;
-
-  // Web OTP flow
-  ConfirmationResult? _confirmationResult;
-
-  // Local/Mock OTP flow
-  String? _localOtpCode;
-  String? _localOtpTarget;
-  String? get localOtpCode => _localOtpCode;
   String? _mockUid;
 
   // ─── Auth State ────────────────────────────────────────────────────────────
@@ -102,148 +92,48 @@ class AuthService {
     }
   }
 
-  // ─── OTP Flow ──────────────────────────────────────────────────────────────
+  // ─── PIN-based Login ────────────────────────────────────────────────────────
 
-  Future<void> sendOtp(
-    String target, {
-    required OtpMethod method,
-    required Function(String verificationId) codeSent,
-    required Function(FirebaseAuthException e) verificationFailed,
-  }) async {
-    _localOtpCode = null;
-    _localOtpTarget = null;
-    _confirmationResult = null;
-    _verificationId = null;
-
-    if (method == OtpMethod.sms) {
-      if (kIsWeb) {
-        // ── Web: signInWithPhoneNumber with invisible reCAPTCHA ──
-        try {
-          final recaptchaVerifier = RecaptchaVerifier(
-            auth: FirebaseAuthPlatform.instance,
-            onSuccess: () {},
-            onError: (FirebaseAuthException error) {
-              verificationFailed(error);
-            },
-            onExpired: () {},
-          );
-          _confirmationResult = await _auth.signInWithPhoneNumber(
-            target,
-            recaptchaVerifier,
-          );
-          codeSent('web'); // verificationId not used on web path
-        } on FirebaseAuthException catch (e) {
-          verificationFailed(e);
-        } catch (e) {
-          verificationFailed(
-            FirebaseAuthException(code: 'unknown', message: e.toString()),
-          );
-        }
-      } else {
-        // ── Mobile: verifyPhoneNumber with SMS auto-retrieval ──
-        await _auth.verifyPhoneNumber(
-          phoneNumber: target,
-          verificationCompleted: (PhoneAuthCredential credential) async {
-            await _auth.signInWithCredential(credential);
-            await _onUserSignedIn();
-          },
-          verificationFailed: verificationFailed,
-          codeSent: (String verificationId, int? resendToken) {
-            _verificationId = verificationId;
-            codeSent(verificationId);
-          },
-          codeAutoRetrievalTimeout: (String verificationId) {
-            _verificationId = verificationId;
-          },
-        );
-      }
-    } else {
-      // ── WhatsApp or Email OTP flow (Generates code and stores locally) ──
-      try {
-        final randomCode = (100000 + DateTime.now().millisecond * 899999 ~/ 1000).toString().padLeft(6, '0');
-        _localOtpCode = randomCode;
-        _localOtpTarget = target;
-        
-        // Simulating delay for realistic UI loading
-        await Future.delayed(const Duration(milliseconds: 800));
-        codeSent('local');
-      } catch (e) {
-        verificationFailed(
-          FirebaseAuthException(code: 'unknown', message: e.toString()),
-        );
-      }
-    }
-  }
-
-  Future<bool> verifyOtp(String smsCode, {required OtpMethod method}) async {
+  /// Login with phone number (digits only) or email + 4-digit PIN.
+  /// Checks local cache first, then Firestore.
+  Future<bool> loginWithPin(String identifier, String pin) async {
     try {
-      if (method == OtpMethod.sms) {
-        // ── Web: confirm via ConfirmationResult ──
-        if (kIsWeb) {
-          if (_confirmationResult == null) return false;
-          await _confirmationResult!.confirm(smsCode);
-        } else {
-          // ── Mobile: credential-based sign-in ──
-          if (_verificationId == null) return false;
-          final credential = PhoneAuthProvider.credential(
-            verificationId: _verificationId!,
-            smsCode: smsCode,
-          );
-          await _auth.signInWithCredential(credential);
-        }
-        await _onUserSignedIn();
-        return true;
-      } else {
-        // ── WhatsApp or Email local verification ──
-        if (smsCode == _localOtpCode || smsCode == '123456' || smsCode == '000000') {
-          try {
-            if (_auth.currentUser == null) {
-              await _auth.signInAnonymously();
-            }
-          } catch (e) {
-            // Fallback to local mock session if Firebase auth is unconfigured or fails
-            final targetStr = _localOtpTarget?.replaceAll(RegExp(r'[^\w]'), '') ?? 'developer';
-            _mockUid = 'mock_${targetStr.isEmpty ? "developer" : targetStr}';
-            print('Firebase Auth error: $e. Using local mock session.');
+      final prefs = await SharedPreferences.getInstance();
+      final keys = prefs.getKeys().where((k) => k.startsWith('cached_user_'));
+
+      for (final key in keys) {
+        final userStr = prefs.getString(key);
+        if (userStr == null) continue;
+        try {
+          final userData = jsonDecode(userStr) as Map<String, dynamic>;
+          final user = UserModel.fromJson(userData);
+          final id = identifier.toLowerCase().trim();
+          final phoneDigits = identifier.replaceAll(RegExp(r'\D'), '');
+          final userPhoneDigits = user.phone.replaceAll(RegExp(r'\D'), '');
+
+          final matchesEmail = user.email.toLowerCase() == id;
+          final matchesPhone = phoneDigits.isNotEmpty &&
+              userPhoneDigits.isNotEmpty &&
+              (userPhoneDigits == phoneDigits ||
+                  userPhoneDigits.endsWith(phoneDigits) ||
+                  phoneDigits.endsWith(userPhoneDigits));
+
+          if ((matchesEmail || matchesPhone) && user.pin == pin) {
+            _currentUserData = user;
+            _mockUid = key.replaceFirst('cached_user_', '');
+            return true;
           }
-          await _onUserSignedIn();
-          return true;
-        }
-        return false;
+        } catch (_) {}
       }
-    } catch (e) {
-      return false;
-    }
+    } catch (_) {}
+    return false;
   }
-
-  Future<void> _onUserSignedIn() async {
-    final uid = _auth.currentUser?.uid ?? _mockUid;
-    if (uid != null) {
-      await _loadUserData(uid);
-    }
-  }
-
-  Future<void> loginAsAdmin() async {
-    _mockUid = 'mock_admin';
-    final adminUser = UserModel(
-      id: 'mock_admin',
-      fullName: 'Admin User',
-      phone: '+919999999999',
-      email: 'admin@payflow.com',
-      pin: '0000',
-      contactsSynced: true,
-    );
-    _currentUserData = adminUser;
-    await _saveUserLocally('mock_admin', adminUser);
-  }
-
 
   // ─── Registration & Profile ────────────────────────────────────────────────
 
   Future<void> register(UserModel user) async {
     final fUser = _auth.currentUser;
-    
-    // Build the final user model — use Firebase UID if available, else generate one
+
     final finalUser = UserModel(
       id: fUser?.uid ?? DateTime.now().millisecondsSinceEpoch.toString(),
       fullName: user.fullName,
@@ -251,25 +141,21 @@ class AuthService {
       email: user.email,
       pin: user.pin,
       contactsSynced: user.contactsSynced,
+      balance: 50000.00, // Default starting balance
     );
-    
-    // Always store locally so app works even offline
-    _currentUserData = finalUser;
 
+    _currentUserData = finalUser;
     final uid = fUser?.uid ?? finalUser.id;
     await _saveUserLocally(uid, finalUser);
+    _mockUid = uid;
 
-    // Try to persist to Firestore (non-fatal if it fails — rules may need updating)
     if (fUser != null) {
       try {
         await _firestore
             .collection('users')
             .doc(fUser.uid)
             .set(finalUser.toJson());
-      } catch (_) {
-        // Firestore write failed (likely security rules) — user is still registered
-        // locally for this session. Remind user to update Firestore rules.
-      }
+      } catch (_) {}
     }
   }
 
@@ -278,7 +164,7 @@ class AuthService {
   Future<void> updatePin(String pin) async {
     final fUser = _auth.currentUser;
     if (_currentUserData == null) return;
-    
+
     _currentUserData!.pin = pin;
     final uid = fUser?.uid ?? _currentUserData!.id;
     await _saveUserLocally(uid, _currentUserData!);
@@ -294,49 +180,152 @@ class AuthService {
     return _currentUserData?.pin == pin;
   }
 
+  /// Checks if a user with [email] and [phone] exists in local cache.
+  Future<bool> checkUserExists(String email, String phone) async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs.getKeys().where((k) => k.startsWith('cached_user_'));
+    for (final key in keys) {
+      final userStr = prefs.getString(key);
+      if (userStr == null) continue;
+      try {
+        final userData = jsonDecode(userStr) as Map<String, dynamic>;
+        final user = UserModel.fromJson(userData);
+        final phoneDigits = phone.replaceAll(RegExp(r'\D'), '');
+        final userPhoneDigits = user.phone.replaceAll(RegExp(r'\D'), '');
+        final emailMatch = user.email.toLowerCase() == email.toLowerCase().trim();
+        final phoneMatch = phoneDigits.isNotEmpty &&
+            userPhoneDigits.isNotEmpty &&
+            (userPhoneDigits == phoneDigits ||
+                userPhoneDigits.endsWith(phoneDigits) ||
+                phoneDigits.endsWith(userPhoneDigits));
+        if (emailMatch && phoneMatch) return true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  /// Verifies that a user with [email] + [phone] exists in local cache,
+  /// loads them into the session, then updates their PIN.
+  /// Throws if no matching user is found.
+  Future<void> resetPinByIdentity(String email, String phone, String newPin) async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs.getKeys().where((k) => k.startsWith('cached_user_'));
+
+    UserModel? matched;
+    String? matchedUid;
+
+    for (final key in keys) {
+      final userStr = prefs.getString(key);
+      if (userStr == null) continue;
+      try {
+        final userData = jsonDecode(userStr) as Map<String, dynamic>;
+        final user = UserModel.fromJson(userData);
+        final phoneDigits = phone.replaceAll(RegExp(r'\D'), '');
+        final userPhoneDigits = user.phone.replaceAll(RegExp(r'\D'), '');
+        final emailMatch = user.email.toLowerCase() == email.toLowerCase().trim();
+        final phoneMatch = phoneDigits.isNotEmpty &&
+            userPhoneDigits.isNotEmpty &&
+            (userPhoneDigits == phoneDigits ||
+                userPhoneDigits.endsWith(phoneDigits) ||
+                phoneDigits.endsWith(userPhoneDigits));
+        if (emailMatch && phoneMatch) {
+          matched = user;
+          matchedUid = key.replaceFirst('cached_user_', '');
+          break;
+        }
+      } catch (_) {}
+    }
+
+    if (matched == null || matchedUid == null) {
+      throw Exception('No account found with these details.');
+    }
+
+    // Load into session
+    _currentUserData = matched;
+    _mockUid = matchedUid;
+
+    // Update PIN
+    matched.pin = newPin;
+    await _saveUserLocally(matchedUid, matched);
+
+    final fUser = _auth.currentUser;
+    if (fUser != null) {
+      try {
+        await _firestore.collection('users').doc(fUser.uid).update({'pin': newPin});
+      } catch (_) {}
+    }
+  }
+
+  // ─── Balance ───────────────────────────────────────────────────────────────
+
+  double get balance => _currentUserData?.balance ?? 0.0;
+
+  /// Returns true on success, false if insufficient funds.
+  Future<bool> deductBalance(double amount) async {
+    if (_currentUserData == null) return false;
+    if (_currentUserData!.balance < amount) return false;
+
+    _currentUserData!.balance -= amount;
+    final uid = _auth.currentUser?.uid ?? _currentUserData!.id;
+    await _saveUserLocally(uid, _currentUserData!);
+
+    final fUser = _auth.currentUser;
+    if (fUser != null) {
+      try {
+        await _firestore.collection('users').doc(fUser.uid).update({
+          'balance': _currentUserData!.balance,
+        });
+      } catch (_) {}
+    }
+    return true;
+  }
+
+  Future<void> addBalance(double amount) async {
+    if (_currentUserData == null) return;
+    _currentUserData!.balance += amount;
+    final uid = _auth.currentUser?.uid ?? _currentUserData!.id;
+    await _saveUserLocally(uid, _currentUserData!);
+  }
+
   // ─── Cards ─────────────────────────────────────────────────────────────────
 
   Future<List<SavedCardModel>> getSavedCards() async {
     final fUser = _auth.currentUser;
-    final uid = fUser?.uid ?? _currentUserData?.id;
+    final uid = fUser?.uid ?? _currentUserData?.id ?? _mockUid;
     if (uid == null) return [];
-    
+
     try {
       final snapshot = await _firestore
           .collection('users')
           .doc(uid)
           .collection('cards')
           .get();
-      
+
       final cards = snapshot.docs.map((doc) => SavedCardModel.fromJson(doc.data())).toList();
-      // Cache locally
       await _saveCardsLocally(uid, cards);
       return cards;
     } catch (e) {
-      // Fallback to local cards
       return await _loadCardsLocally(uid);
     }
   }
 
   Future<void> saveCard(SavedCardModel card) async {
     final fUser = _auth.currentUser;
-    final uid = fUser?.uid ?? _currentUserData?.id;
+    final uid = fUser?.uid ?? _currentUserData?.id ?? _mockUid;
     if (uid == null) return;
-    
+
     final cards = await getSavedCards();
     if (cards.isEmpty) card.isDefault = true;
-    
-    // Add or update the card in the list
+
     final existingIndex = cards.indexWhere((c) => c.id == card.id);
     if (existingIndex >= 0) {
       cards[existingIndex] = card;
     } else {
       cards.add(card);
     }
-    
-    // Save locally
+
     await _saveCardsLocally(uid, cards);
-    
+
     if (fUser != null) {
       try {
         final cardsRef = _firestore.collection('users').doc(fUser.uid).collection('cards');
@@ -347,13 +336,13 @@ class AuthService {
 
   Future<void> deleteCard(String cardId) async {
     final fUser = _auth.currentUser;
-    final uid = fUser?.uid ?? _currentUserData?.id;
+    final uid = fUser?.uid ?? _currentUserData?.id ?? _mockUid;
     if (uid == null) return;
-    
+
     final cards = await getSavedCards();
     cards.removeWhere((c) => c.id == cardId);
     await _saveCardsLocally(uid, cards);
-    
+
     if (fUser != null) {
       try {
         await _firestore
@@ -368,20 +357,20 @@ class AuthService {
 
   Future<void> setDefaultCard(String cardId) async {
     final fUser = _auth.currentUser;
-    final uid = fUser?.uid ?? _currentUserData?.id;
+    final uid = fUser?.uid ?? _currentUserData?.id ?? _mockUid;
     if (uid == null) return;
-    
+
     final cards = await getSavedCards();
     for (var card in cards) {
       card.isDefault = (card.id == cardId);
     }
     await _saveCardsLocally(uid, cards);
-    
+
     if (fUser != null) {
       try {
         final cardsRef = _firestore.collection('users').doc(fUser.uid).collection('cards');
         final snapshot = await cardsRef.get();
-        
+
         final batch = _firestore.batch();
         for (var doc in snapshot.docs) {
           batch.update(doc.reference, {'isDefault': doc.id == cardId});
@@ -396,11 +385,11 @@ class AuthService {
   Future<void> markContactsSynced() async {
     final fUser = _auth.currentUser;
     if (_currentUserData == null) return;
-    
+
     _currentUserData!.contactsSynced = true;
     final uid = fUser?.uid ?? _currentUserData!.id;
     await _saveUserLocally(uid, _currentUserData!);
-    
+
     if (fUser != null) {
       try {
         await _firestore.collection('users').doc(fUser.uid).update({'contactsSynced': true});
@@ -408,13 +397,46 @@ class AuthService {
     }
   }
 
+  void setSyncedContacts(List<ContactModel> contacts) {
+    _currentUserData?.syncedContacts = contacts;
+  }
+
+  List<ContactModel> getSyncedContacts() {
+    return _currentUserData?.syncedContacts ?? [];
+  }
+
+  // ─── Transactions ──────────────────────────────────────────────────────────
+
+  void recordTransaction({
+    required String vendor,
+    required double amount,
+    required TransactionType type,
+  }) {
+    final txId = 'TX${DateTime.now().millisecondsSinceEpoch}';
+    mockTransactions.insert(
+      0,
+      TransactionModel(
+        id: txId,
+        vendor: vendor,
+        category: type == TransactionType.debit ? 'Transfer' : 'Credit',
+        amount: amount,
+        type: type,
+        date: DateTime.now(),
+        icon: type == TransactionType.debit
+            ? Icons.send_rounded
+            : Icons.south_west_rounded,
+        iconColor: type == TransactionType.debit
+            ? kGreen
+            : const Color(0xFF5B8FF9),
+      ),
+    );
+  }
+
   // ─── Logout ────────────────────────────────────────────────────────────────
 
   Future<void> logout() async {
     await _auth.signOut();
     _currentUserData = null;
-    _verificationId = null;
-    _confirmationResult = null;
     _mockUid = null;
   }
 }
