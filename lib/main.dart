@@ -50,7 +50,7 @@ class PayFlowApp extends StatelessWidget {
             statusBarIconBrightness: Brightness.light,
           ),
         ),
-        pageTransitionsTheme: const PageTransitionsTheme(
+        pageTransitionsTheme: PageTransitionsTheme(
           builders: {
             TargetPlatform.android: ZoomPageTransitionsBuilder(),
             TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
