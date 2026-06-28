@@ -8,7 +8,6 @@ import '../models/contact_model.dart';
 import '../models/saved_card_model.dart';
 import '../models/transaction_model.dart';
 import '../services/auth_service.dart';
-import '../services/razorpay_service.dart';
 import '../widgets/swipe_to_pay_slider.dart';
 import 'success_screen.dart';
 
@@ -77,7 +76,6 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
   Future<void> _loadCards() async {
     final cards = await AuthService.instance.getSavedCards();
     setState(() {
-      // Always ensure at least the demo card so Send flow is never blocked
       _cards = cards.isEmpty ? [_demoCard] : cards;
       _loading = false;
     });
@@ -145,7 +143,7 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
 
   double get _amount => double.tryParse(_display) ?? 0;
 
-  // ─── Payment confirmation sheet ─────────────────────────────────────────────
+  // ─── Show confirmation sheet ────────────────────────────────────────────────
 
   void _showConfirmationSheet() {
     if (_amount <= 0) {
@@ -160,7 +158,6 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
       return;
     }
 
-    // Check sufficient balance before showing sheet
     final balance = AuthService.instance.balance;
     if (_amount > balance) {
       HapticFeedback.heavyImpact();
@@ -174,7 +171,8 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
               Expanded(
                 child: Text(
                   'Insufficient balance. Available: ₹${balance.toStringAsFixed(0)}',
-                  style: GoogleFonts.inter(color: Colors.white, fontSize: 13),
+                  style:
+                      GoogleFonts.inter(color: Colors.white, fontSize: 13),
                 ),
               ),
             ],
@@ -197,46 +195,69 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
         recipient: widget.recipient,
         card: card,
         upiId: _upiMode ? _upiCtrl.text.trim() : widget.upiId,
-        onConfirmed: _initiateRazorpayPayment,
+        onConfirmed: _showPinDialog,
       ),
     );
   }
 
-  void _initiateRazorpayPayment() {
-    Navigator.pop(context); // close sheet first
-    setState(() => _loading = true);
-
-    final user = AuthService.instance.currentUser;
-    final phone = user?.phone ?? '+919999999999';
-    final email = user?.email ?? 'user@payflow.com';
-    final name = user?.fullName ?? 'PayFlow User';
-
-    RazorpayService.instance.checkout(
-      amountInPaise: (_amount * 100).round(),
-      contactPhone: phone,
-      contactEmail: email,
-      contactName: name,
-      description: 'Payment to ${widget.recipient.name}',
-      upiId: _upiMode ? _upiCtrl.text.trim() : widget.upiId,
-      onSuccess: (paymentId, orderId) => _onPaymentSuccess(paymentId),
-      onError: (message) => _onPaymentError(message),
+  /// Shows the PIN entry dialog (instead of Razorpay).
+  void _showPinDialog() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      isDismissible: false,
+      builder: (ctx) => _PinEntrySheet(
+        onPinEntered: (pin) {
+          Navigator.pop(ctx);
+          if (AuthService.instance.verifyPin(pin)) {
+            _processPayment();
+          } else {
+            HapticFeedback.heavyImpact();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Incorrect PIN. Please try again.',
+                    style: GoogleFonts.inter(color: Colors.white)),
+                backgroundColor: kRed,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        },
+      ),
     );
   }
 
-  Future<void> _onPaymentSuccess(String paymentId) async {
-    // Deduct balance
-    await AuthService.instance.deductBalance(_amount);
-    // Record transaction
-    AuthService.instance.recordTransaction(
+  Future<void> _processPayment() async {
+    setState(() => _loading = true);
+
+    final success = await AuthService.instance.deductBalance(_amount);
+    if (!success) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Insufficient balance.',
+              style: GoogleFonts.inter(color: Colors.white)),
+          backgroundColor: kRed,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    // Record the transaction
+    await AuthService.instance.recordTransaction(
       vendor: widget.recipient.name,
       amount: _amount,
       type: TransactionType.debit,
+      category: 'Transfer',
     );
 
     if (!mounted) return;
     setState(() => _loading = false);
 
-    final txId = paymentId.isNotEmpty ? paymentId : 'TX${DateTime.now().millisecondsSinceEpoch}';
+    final txId = 'TX${DateTime.now().millisecondsSinceEpoch}';
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 600),
@@ -247,22 +268,6 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
         ),
         transitionsBuilder: (_, anim, __, child) =>
             FadeTransition(opacity: anim, child: child),
-      ),
-    );
-  }
-
-  void _onPaymentError(String message) {
-    if (!mounted) return;
-    setState(() => _loading = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Payment failed: $message',
-          style: GoogleFonts.inter(color: Colors.white),
-        ),
-        backgroundColor: kRed,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 4),
       ),
     );
   }
@@ -422,7 +427,6 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
     );
   }
 
-  // UPI ID entry panel (shown when UPI ID tab is active)
   Widget _buildUpiEntry() {
     return Expanded(
       child: Padding(
@@ -440,8 +444,7 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
             const SizedBox(height: 8),
             Text(
               'Format: name@upi or number@bank',
-              style:
-                  GoogleFonts.inter(color: Colors.black45, fontSize: 13),
+              style: GoogleFonts.inter(color: Colors.black45, fontSize: 13),
             ),
             const SizedBox(height: 20),
             TextField(
@@ -453,8 +456,8 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
                   fontWeight: FontWeight.w500),
               decoration: InputDecoration(
                 hintText: 'e.g. priya@okaxis',
-                hintStyle: GoogleFonts.inter(
-                    color: Colors.black38, fontSize: 15),
+                hintStyle:
+                    GoogleFonts.inter(color: Colors.black38, fontSize: 15),
                 prefixIcon: const Icon(Icons.alternate_email,
                     color: Colors.black38, size: 20),
                 filled: true,
@@ -466,8 +469,7 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(14),
-                  borderSide:
-                      const BorderSide(color: kGreen, width: 2),
+                  borderSide: const BorderSide(color: kGreen, width: 2),
                 ),
                 contentPadding: const EdgeInsets.symmetric(
                     horizontal: 16, vertical: 14),
@@ -475,7 +477,6 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
               onChanged: (_) => setState(() => _upiError = null),
             ),
             const SizedBox(height: 24),
-            // Amount input
             Text(
               'Amount (₹)',
               style: GoogleFonts.inter(
@@ -511,39 +512,45 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
                 contentPadding: const EdgeInsets.symmetric(
                     horizontal: 16, vertical: 14),
               ),
-              onChanged: (v) => setState(() => _display = v.isEmpty ? '0' : v),
+              onChanged: (v) =>
+                  setState(() => _display = v.isEmpty ? '0' : v),
             ),
             const Spacer(),
-            // Popular UPI handles
             Text(
               'Common UPI handles',
-              style: GoogleFonts.inter(
-                  color: Colors.black45, fontSize: 12),
+              style: GoogleFonts.inter(color: Colors.black45, fontSize: 12),
             ),
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                '@okaxis', '@okicici', '@okhdfcbank', '@oksbi',
-                '@ybl', '@ibl', '@apl'
-              ].map((h) => GestureDetector(
-                    onTap: () {
-                      final base = _upiCtrl.text.split('@')[0];
-                      _upiCtrl.text = '$base$h';
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFECECEC),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(h,
-                          style: GoogleFonts.inter(
-                              color: Colors.black54, fontSize: 12)),
-                    ),
-                  )).toList(),
+                '@okaxis',
+                '@okicici',
+                '@okhdfcbank',
+                '@oksbi',
+                '@ybl',
+                '@ibl',
+                '@apl'
+              ]
+                  .map((h) => GestureDetector(
+                        onTap: () {
+                          final base = _upiCtrl.text.split('@')[0];
+                          _upiCtrl.text = '$base$h';
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFECECEC),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(h,
+                              style: GoogleFonts.inter(
+                                  color: Colors.black54, fontSize: 12)),
+                        ),
+                      ))
+                  .toList(),
             ),
           ],
         ),
@@ -553,8 +560,7 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
 
   Widget _buildAmountDisplay() {
     return Padding(
-      padding:
-          const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -608,8 +614,7 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
               width: 52,
               height: 36,
               decoration: BoxDecoration(
-                color:
-                    active ? Colors.black : const Color(0xFFF0F0F0),
+                color: active ? Colors.black : const Color(0xFFF0F0F0),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Center(
@@ -688,6 +693,165 @@ class _CalculatorSendScreenState extends State<CalculatorSendScreen> {
   }
 }
 
+// ─── PIN Entry Bottom Sheet ────────────────────────────────────────────────────
+
+class _PinEntrySheet extends StatefulWidget {
+  final void Function(String pin) onPinEntered;
+
+  const _PinEntrySheet({required this.onPinEntered});
+
+  @override
+  State<_PinEntrySheet> createState() => _PinEntrySheetState();
+}
+
+class _PinEntrySheetState extends State<_PinEntrySheet> {
+  final List<String> _pin = [];
+
+  void _onKey(String key) {
+    if (_pin.length >= 4) return;
+    HapticFeedback.lightImpact();
+    setState(() => _pin.add(key));
+    if (_pin.length == 4) {
+      Future.delayed(const Duration(milliseconds: 200), () {
+        widget.onPinEntered(_pin.join());
+      });
+    }
+  }
+
+  void _onDelete() {
+    if (_pin.isEmpty) return;
+    HapticFeedback.selectionClick();
+    setState(() => _pin.removeLast());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final keys = [
+      ['1', '2', '3'],
+      ['4', '5', '6'],
+      ['7', '8', '9'],
+      ['', '0', 'del'],
+    ];
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF111417),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 36,
+            height: 4,
+            decoration: BoxDecoration(
+              color: const Color(0xFF252D37),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 28),
+          const Icon(Icons.lock_outline_rounded, color: kGreen, size: 32),
+          const SizedBox(height: 12),
+          Text(
+            'Enter PIN to confirm',
+            style: GoogleFonts.inter(
+                color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Use your PayFlow PIN to authorise this payment',
+            style: GoogleFonts.inter(
+                color: const Color(0xFF9BA3AE), fontSize: 13),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 28),
+          // PIN dots
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(4, (i) {
+              final filled = i < _pin.length;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                margin: const EdgeInsets.symmetric(horizontal: 10),
+                width: filled ? 18 : 16,
+                height: filled ? 18 : 16,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: filled ? kGreen : Colors.transparent,
+                  border: Border.all(
+                    color: filled ? kGreen : const Color(0xFF5A6373),
+                    width: 1.5,
+                  ),
+                  boxShadow: filled ? greenGlow(blur: 12) : null,
+                ),
+              );
+            }),
+          ),
+          const SizedBox(height: 28),
+          // Keypad
+          ...keys.map((row) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: row.map((key) {
+                    if (key.isEmpty) {
+                      return const SizedBox(width: 72, height: 64);
+                    }
+                    if (key == 'del') {
+                      return _PinKey(
+                        onTap: _onDelete,
+                        child: const Icon(Icons.backspace_outlined,
+                            color: Colors.white70, size: 22),
+                      );
+                    }
+                    return _PinKey(
+                      onTap: () => _onKey(key),
+                      child: Text(key,
+                          style: GoogleFonts.inter(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w400)),
+                    );
+                  }).toList(),
+                ),
+              )),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel',
+                style: GoogleFonts.inter(
+                    color: const Color(0xFF9BA3AE), fontSize: 14)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PinKey extends StatelessWidget {
+  final Widget child;
+  final VoidCallback onTap;
+
+  const _PinKey({required this.child, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 72,
+        height: 64,
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C2128),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Center(child: child),
+      ),
+    );
+  }
+}
+
 // ─── Payment Confirmation Bottom Sheet ────────────────────────────────────────
 
 double _carbonGrams(double amount, String category) {
@@ -737,6 +901,10 @@ class _PaymentConfirmSheetState extends State<_PaymentConfirmSheet> {
     final offsetCost = ((carbonG / 1000).ceil() * 10).clamp(1, 999);
     final totalAmount = widget.amount + (_offsetAdded ? offsetCost : 0);
 
+    // Inline insufficient balance check
+    final balance = AuthService.instance.balance;
+    final hasEnoughBalance = totalAmount <= balance;
+
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFF111417),
@@ -746,7 +914,6 @@ class _PaymentConfirmSheetState extends State<_PaymentConfirmSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Handle
           Container(
             width: 36,
             height: 4,
@@ -756,7 +923,6 @@ class _PaymentConfirmSheetState extends State<_PaymentConfirmSheet> {
             ),
           ),
           const SizedBox(height: 24),
-          // Title
           Text(
             'Confirm Payment',
             style: GoogleFonts.inter(
@@ -771,16 +937,21 @@ class _PaymentConfirmSheetState extends State<_PaymentConfirmSheet> {
             width: double.infinity,
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: kGreen.withValues(alpha: 0.12),
+              color: hasEnoughBalance
+                  ? kGreen.withValues(alpha: 0.12)
+                  : kRed.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: kGreen.withValues(alpha: 0.25)),
+              border: Border.all(
+                  color: hasEnoughBalance
+                      ? kGreen.withValues(alpha: 0.25)
+                      : kRed.withValues(alpha: 0.25)),
             ),
             child: Column(
               children: [
                 Text(
                   '₹ ${totalAmount.toStringAsFixed(totalAmount % 1 == 0 ? 0 : 2)}',
                   style: GoogleFonts.inter(
-                    color: kGreen,
+                    color: hasEnoughBalance ? kGreen : kRed,
                     fontSize: 44,
                     fontWeight: FontWeight.w800,
                     letterSpacing: -1,
@@ -817,18 +988,45 @@ class _PaymentConfirmSheetState extends State<_PaymentConfirmSheet> {
                     ),
                   ],
                 ),
+                // Insufficient balance banner inside sheet
+                if (!hasEnoughBalance) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: kRed.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.warning_amber_rounded,
+                            color: kRed, size: 16),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Insufficient balance (₹${balance.toStringAsFixed(0)} available)',
+                          style: GoogleFonts.inter(
+                              color: kRed,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ).animate().fadeIn().scale(begin: const Offset(0.95, 0.95)),
           const SizedBox(height: 20),
-          // Details
           _DetailRow(
             label: 'To',
             value: widget.upiId ?? widget.recipient.username,
           ),
           _DetailRow(
             label: 'From',
-            value: '${widget.card.brand.toUpperCase()} ···· ${widget.card.last4}',
+            value:
+                '${widget.card.brand.toUpperCase()} ···· ${widget.card.last4}',
           ),
           _DetailRow(
             label: 'Ref. No.',
@@ -845,7 +1043,8 @@ class _PaymentConfirmSheetState extends State<_PaymentConfirmSheet> {
             onTap: () => setState(() => _offsetAdded = !_offsetAdded),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 250),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
                 color: _offsetAdded
                     ? const Color(0xFF1A3A2A)
@@ -859,7 +1058,7 @@ class _PaymentConfirmSheetState extends State<_PaymentConfirmSheet> {
               ),
               child: Row(
                 children: [
-                  Text('🌱', style: const TextStyle(fontSize: 18)),
+                  const Text('🌱', style: TextStyle(fontSize: 18)),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -893,11 +1092,14 @@ class _PaymentConfirmSheetState extends State<_PaymentConfirmSheet> {
                       shape: BoxShape.circle,
                       color: _offsetAdded ? kGreen : Colors.transparent,
                       border: Border.all(
-                          color: _offsetAdded ? kGreen : const Color(0xFF5A6373),
+                          color: _offsetAdded
+                              ? kGreen
+                              : const Color(0xFF5A6373),
                           width: 1.5),
                     ),
                     child: _offsetAdded
-                        ? const Icon(Icons.check, size: 12, color: Colors.black)
+                        ? const Icon(Icons.check,
+                            size: 12, color: Colors.black)
                         : null,
                   ),
                 ],
@@ -909,25 +1111,35 @@ class _PaymentConfirmSheetState extends State<_PaymentConfirmSheet> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context); // close sheet
-                widget.onConfirmed();
-              },
+              onPressed: hasEnoughBalance
+                  ? () {
+                      Navigator.pop(context); // close sheet
+                      widget.onConfirmed();
+                    }
+                  : null,
               style: ElevatedButton.styleFrom(
                 backgroundColor: kGreen,
+                disabledBackgroundColor: kGreen.withValues(alpha: 0.3),
                 padding: const EdgeInsets.symmetric(vertical: 18),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(18),
                 ),
                 elevation: 0,
               ),
-              child: Text(
-                'Pay ₹${totalAmount.toStringAsFixed(totalAmount % 1 == 0 ? 0 : 2)}',
-                style: GoogleFonts.inter(
-                  color: Colors.black,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.lock_outline, color: Colors.black, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Pay ₹${totalAmount.toStringAsFixed(totalAmount % 1 == 0 ? 0 : 2)} with PIN',
+                    style: GoogleFonts.inter(
+                      color: Colors.black,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
             ),
           ).animate(delay: 200.ms).fadeIn().slideY(begin: 0.1, end: 0),

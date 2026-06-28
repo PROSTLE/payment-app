@@ -28,7 +28,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _continueToPin() {
+  Future<void> _continueToPin() async {
     final id = _identifierCtrl.text.trim();
     if (id.isEmpty) {
       setState(() => _errorMsg = 'Please enter your phone number or email');
@@ -40,6 +40,64 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _errorMsg = 'Enter a valid phone number or email');
       return;
     }
+
+    setState(() { _loading = true; _errorMsg = null; });
+    final exists = await AuthService.instance.identifierExists(id);
+    if (!mounted) return;
+    setState(() => _loading = false);
+
+    if (!exists) {
+      // Show popup: not registered
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            'No Account Found 👀',
+            style: GoogleFonts.inter(
+              color: const Color(0xFFE2E8F0),
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          content: Text(
+            'We couldn\'t find an account with "$id".\nWould you like to create one?',
+            style: GoogleFonts.inter(
+              color: const Color(0xFF94A3B8),
+              fontSize: 14,
+              height: 1.5,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancel',
+                  style: GoogleFonts.inter(color: const Color(0xFF64748B), fontSize: 14)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SignupScreen()),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF22C55E),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 0,
+              ),
+              child: Text('Create Account',
+                  style: GoogleFonts.inter(
+                      color: Colors.black, fontSize: 14, fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _step = 1;
       _pin = '';
@@ -352,13 +410,38 @@ class _LoginScreenState extends State<LoginScreen> {
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
       child: Column(
         children: [
-          GestureDetector(
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const ForgotPinScreen()),
-            ),
-            child: Text('Forgot PIN?',
-                style: GoogleFonts.inter(
-                    color: kTextMuted, fontSize: 13, fontWeight: FontWeight.w500)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              GestureDetector(
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (_) => const ForgotPinScreen(mode: ForgotMode.pin)),
+                ),
+                child: Text('Forgot PIN?',
+                    style: GoogleFonts.inter(
+                        color: kTextMuted,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500)),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Text('·',
+                    style: GoogleFonts.inter(color: kTextMuted, fontSize: 13)),
+              ),
+              GestureDetector(
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (_) =>
+                          const ForgotPinScreen(mode: ForgotMode.password)),
+                ),
+                child: Text('Forgot Password?',
+                    style: GoogleFonts.inter(
+                        color: kTextMuted,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500)),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           GestureDetector(
@@ -373,7 +456,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextSpan(
                     text: 'Create one',
                     style: GoogleFonts.inter(
-                        color: kGreen, fontWeight: FontWeight.w600, fontSize: 14),
+                        color: kGreen,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14),
                   ),
                 ],
               ),

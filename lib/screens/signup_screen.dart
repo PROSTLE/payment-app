@@ -23,6 +23,8 @@ class _SignupScreenState extends State<SignupScreen> {
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  bool _passwordVisible = false;
 
   // Step 1 PIN
   String _pin = '';
@@ -38,6 +40,7 @@ class _SignupScreenState extends State<SignupScreen> {
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
     _emailCtrl.dispose();
+    _passwordCtrl.dispose();
     super.dispose();
   }
 
@@ -70,6 +73,10 @@ class _SignupScreenState extends State<SignupScreen> {
     }
     if (!_emailCtrl.text.trim().contains('@')) {
       setState(() => _formError = 'Enter a valid email address');
+      return false;
+    }
+    if (_passwordCtrl.text.trim().length < 6) {
+      setState(() => _formError = 'Password must be at least 6 characters');
       return false;
     }
     return true;
@@ -128,6 +135,7 @@ class _SignupScreenState extends State<SignupScreen> {
         phone: '+91${_phoneCtrl.text.trim()}',
         email: _emailCtrl.text.trim(),
         pin: _pin,
+        password: _passwordCtrl.text.trim(),
       );
       await AuthService.instance.register(user);
       if (!mounted) return;
@@ -306,6 +314,36 @@ class _SignupScreenState extends State<SignupScreen> {
             hint: 'you@example.com',
             icon: Icons.email_outlined,
             inputType: TextInputType.emailAddress,
+          ),
+          const SizedBox(height: 16),
+
+          _buildLabel('Password'),
+          TextField(
+            controller: _passwordCtrl,
+            obscureText: !_passwordVisible,
+            style: GoogleFonts.inter(color: kTextPrimary, fontSize: 15),
+            decoration: InputDecoration(
+              hintText: 'Min. 6 characters',
+              hintStyle: GoogleFonts.inter(color: kTextMuted, fontSize: 15),
+              prefixIcon: const Icon(Icons.lock_outline, color: kTextMuted, size: 20),
+              suffixIcon: GestureDetector(
+                onTap: () => setState(() => _passwordVisible = !_passwordVisible),
+                child: Icon(
+                  _passwordVisible ? Icons.visibility_off : Icons.visibility,
+                  color: kTextMuted, size: 20,
+                ),
+              ),
+              filled: true,
+              fillColor: kSurface1,
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+              enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: kDivider)),
+              focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: kGreen, width: 1.5)),
+            ),
           ),
           const SizedBox(height: 24),
 

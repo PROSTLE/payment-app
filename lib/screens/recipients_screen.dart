@@ -5,6 +5,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../constants/colors.dart';
 import '../models/contact_model.dart';
 import '../services/upi_parser.dart';
+import '../services/auth_service.dart';
 import 'calculator_send_screen.dart';
 
 class RecipientsScreen extends StatefulWidget {
@@ -20,6 +21,25 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
   String _filter = '';
   String _tab = 'All';
 
+  List<ContactModel> _contacts = [];
+  bool _loadingContacts = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadContacts();
+  }
+
+  Future<void> _loadContacts() async {
+    final contacts = await AuthService.instance.getPayFlowContacts();
+    if (mounted) {
+      setState(() {
+        _contacts = contacts;
+        _loadingContacts = false;
+      });
+    }
+  }
+
   @override
   void dispose() {
     _searchCtrl.dispose();
@@ -28,10 +48,11 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
   }
 
   List<ContactModel> get _filtered {
-    return mockContacts.where((c) {
+    return _contacts.where((c) {
       final q = _filter.toLowerCase();
       return c.name.toLowerCase().contains(q) ||
-          c.username.toLowerCase().contains(q);
+          c.username.toLowerCase().contains(q) ||
+          (c.phone?.contains(q) ?? false);
     }).toList();
   }
 
@@ -45,7 +66,8 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
           children: [
             _buildHeader(),
             _buildUpiQuickSend(),
-            _buildRecentGrid(),
+            if (!_loadingContacts && _contacts.isNotEmpty)
+              _buildRecentGrid(),
             _buildDivider(),
             _buildSearchBar(),
             _buildTabs(),
@@ -75,7 +97,6 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
               fontWeight: FontWeight.w700,
             ),
           ),
-          // QR Scanner button
           GestureDetector(
             onTap: _openQrScanner,
             child: Container(
@@ -113,7 +134,8 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
               return;
             }
             final parts = payload.vpa.split('@');
-            final name = payload.name.isNotEmpty ? payload.name
+            final name = payload.name.isNotEmpty
+                ? payload.name
                 : (parts[0].isNotEmpty
                     ? parts[0][0].toUpperCase() + parts[0].substring(1)
                     : 'UPI Recipient');
@@ -135,8 +157,9 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
                 ),
                 transitionsBuilder: (_, anim, __, child) => SlideTransition(
                   position: Tween<Offset>(
-                      begin: const Offset(0, 1), end: Offset.zero)
-                      .animate(CurvedAnimation(parent: anim, curve: Curves.easeOut)),
+                          begin: const Offset(0, 1), end: Offset.zero)
+                      .animate(CurvedAnimation(
+                          parent: anim, curve: Curves.easeOut)),
                   child: child,
                 ),
               ),
@@ -147,7 +170,6 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
     );
   }
 
-  // UPI quick-send row: user types a UPI ID and goes straight to amount entry
   Widget _buildUpiQuickSend() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
@@ -156,8 +178,7 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
           Expanded(
             child: TextField(
               controller: _upiQuickCtrl,
-              style:
-                  GoogleFonts.inter(color: kTextPrimary, fontSize: 14),
+              style: GoogleFonts.inter(color: kTextPrimary, fontSize: 14),
               decoration: InputDecoration(
                 hintText: 'Enter UPI ID  (e.g. name@bank)',
                 hintStyle:
@@ -243,7 +264,7 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
   }
 
   Widget _buildRecentGrid() {
-    final recent = mockContacts.take(6).toList();
+    final recent = _contacts.take(6).toList();
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
       child: GridView.count(
@@ -280,7 +301,7 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
                     .fadeIn(),
                 const SizedBox(height: 6),
                 Text(
-                  recent[i].name,
+                  recent[i].name.split(' ')[0],
                   style: GoogleFonts.inter(
                     color: kTextPrimary,
                     fontSize: 13,
@@ -317,8 +338,7 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
         style: GoogleFonts.inter(color: kTextPrimary, fontSize: 14),
         decoration: InputDecoration(
           hintText: 'Search contacts...',
-          hintStyle:
-              GoogleFonts.inter(color: kTextMuted, fontSize: 14),
+          hintStyle: GoogleFonts.inter(color: kTextMuted, fontSize: 14),
           prefixIcon:
               const Icon(Icons.search, color: kTextMuted, size: 20),
           filled: true,
@@ -338,7 +358,7 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
       child: Row(
-        children: ['All', 'My accounts'].map((tab) {
+        children: ['All', 'PayFlow'].map((tab) {
           final selected = _tab == tab;
           return GestureDetector(
             onTap: () => setState(() => _tab = tab),
@@ -369,11 +389,44 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
   }
 
   Widget _buildContactList() {
+    if (_loadingContacts) {
+      return const Center(
+        child: CircularProgressIndicator(color: kGreen, strokeWidth: 2),
+      );
+    }
+
+    if (_contacts.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.people_outline, color: kTextMuted, size: 48),
+            const SizedBox(height: 12),
+            Text(
+              'No PayFlow users yet',
+              style: GoogleFonts.inter(
+                  color: kTextPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'You can send to any UPI ID above',
+              style:
+                  GoogleFonts.inter(color: kTextMuted, fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final list = _filtered;
+
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-      itemCount: _filtered.length,
+      itemCount: list.length,
       itemBuilder: (ctx, i) {
-        final contact = _filtered[i];
+        final contact = list[i];
         return GestureDetector(
           onTap: () => _navigateToSend(contact),
           child: Container(
@@ -408,17 +461,29 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
                             fontSize: 15,
                             fontWeight: FontWeight.w500,
                           )),
-                      Text(contact.bank,
+                      Text(contact.username,
                           style: GoogleFonts.inter(
                               color: kTextMuted, fontSize: 12)),
                     ],
                   ),
                 ),
-                if (contact.accountSuffix != null)
-                  Text(
-                    '${contact.bank} ${contact.accountSuffix}',
-                    style: GoogleFonts.inter(
-                        color: kTextMuted, fontSize: 12),
+                if (contact.isPayFlowUser)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: kGreen.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border:
+                          Border.all(color: kGreen.withValues(alpha: 0.4)),
+                    ),
+                    child: Text(
+                      'PayFlow',
+                      style: GoogleFonts.inter(
+                          color: kGreen,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600),
+                    ),
                   ),
               ],
             ),
@@ -432,13 +497,14 @@ class _RecipientsScreenState extends State<RecipientsScreen> {
     Navigator.of(context).push(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 350),
-        pageBuilder: (_, __, ___) =>
-            CalculatorSendScreen(recipient: contact),
+        pageBuilder: (_, __, ___) => CalculatorSendScreen(
+          recipient: contact,
+          upiId: contact.payflowUpiId,
+        ),
         transitionsBuilder: (_, anim, __, child) => SlideTransition(
-          position:
-              Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
-                  .animate(
-                      CurvedAnimation(parent: anim, curve: Curves.easeOut)),
+          position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
+              .animate(
+                  CurvedAnimation(parent: anim, curve: Curves.easeOut)),
           child: child,
         ),
       ),
@@ -484,7 +550,6 @@ class _QrScannerPageState extends State<_QrScannerPage> {
               widget.onScanned(raw);
             },
           ),
-          // Overlay
           SafeArea(
             child: Column(
               children: [
@@ -506,9 +571,9 @@ class _QrScannerPageState extends State<_QrScannerPage> {
                         ),
                       ),
                       const Spacer(),
-                      Text(
+                      const Text(
                         'Scan UPI QR Code',
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: Colors.white,
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
@@ -532,12 +597,12 @@ class _QrScannerPageState extends State<_QrScannerPage> {
                   ),
                 ),
                 const Spacer(),
-                // Scan guide box
                 Container(
                   width: 240,
                   height: 240,
                   decoration: BoxDecoration(
-                    border: Border.all(color: Colors.greenAccent, width: 2),
+                    border:
+                        Border.all(color: Colors.greenAccent, width: 2),
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),

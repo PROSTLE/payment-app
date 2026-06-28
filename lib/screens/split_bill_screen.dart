@@ -5,6 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../constants/colors.dart';
 import '../models/contact_model.dart';
 import '../widgets/glassmorphic_card.dart';
+import '../services/auth_service.dart';
 
 class SplitBillScreen extends StatefulWidget {
   const SplitBillScreen({super.key});
@@ -19,6 +20,10 @@ class _SplitBillScreenState extends State<SplitBillScreen>
   final _totalCtrl = TextEditingController();
   double _total = 0;
 
+  // PayFlow contacts loaded dynamically
+  List<ContactModel> _payflowContacts = [];
+  bool _loadingContacts = true;
+
   // Participants dragged into the squad
   final List<ContactModel> _squad = [];
 
@@ -30,6 +35,22 @@ class _SplitBillScreenState extends State<SplitBillScreen>
 
   bool _isHoveringDrop = false;
   bool _squadSentSuccessfully = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadContacts();
+  }
+
+  Future<void> _loadContacts() async {
+    final contacts = await AuthService.instance.getPayFlowContacts();
+    if (mounted) {
+      setState(() {
+        _payflowContacts = contacts;
+        _loadingContacts = false;
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -58,7 +79,10 @@ class _SplitBillScreenState extends State<SplitBillScreen>
   }
 
   void _rebalancePct() {
-    if (_squad.isEmpty) { _customPct.clear(); return; }
+    if (_squad.isEmpty) {
+      _customPct.clear();
+      return;
+    }
     final equalShare = 1.0 / _squad.length;
     for (int i = 0; i < _squad.length; i++) {
       _customPct[i] = equalShare;
@@ -75,7 +99,7 @@ class _SplitBillScreenState extends State<SplitBillScreen>
     if (_squad.isEmpty || _total <= 0) return;
     setState(() => _squadSentSuccessfully = true);
     HapticFeedback.heavyImpact();
-    Future.delayed(const Duration(seconds: 2), () {
+    Future.delayed(const Duration(seconds: 3), () {
       if (mounted) setState(() => _squadSentSuccessfully = false);
     });
   }
@@ -87,14 +111,14 @@ class _SplitBillScreenState extends State<SplitBillScreen>
       appBar: AppBar(
         backgroundColor: kBgDark,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: kTextPrimary, size: 20),
-          onPressed: () => Navigator.pop(context),
-        ),
+        automaticallyImplyLeading: false,
+        titleSpacing: 20,
         title: Text(
-          'Squad Wallet 💰',
+          'Squad Wallet',
           style: GoogleFonts.inter(
-              color: kTextPrimary, fontSize: 20, fontWeight: FontWeight.w700),
+              color: kTextPrimary,
+              fontSize: 20,
+              fontWeight: FontWeight.w700),
         ),
         actions: [
           if (_squad.isNotEmpty && _total > 0)
@@ -102,7 +126,8 @@ class _SplitBillScreenState extends State<SplitBillScreen>
               onTap: _sendRequests,
               child: Container(
                 margin: const EdgeInsets.only(right: 16),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
                   color: kGreen,
                   borderRadius: BorderRadius.circular(12),
@@ -126,41 +151,26 @@ class _SplitBillScreenState extends State<SplitBillScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Squad name
                   _buildSquadNameField(),
                   const SizedBox(height: 16),
-
-                  // Total amount
                   _buildTotalInput(),
                   const SizedBox(height: 20),
-
-                  // Drop zone for squad members
                   _buildDropZone(),
                   const SizedBox(height: 16),
-
-                  // Split mode toggle (only shown if squad has members)
                   if (_squad.isNotEmpty) ...[
                     _buildSplitModeToggle(),
                     const SizedBox(height: 16),
-
-                    // Per-member breakdown
                     _buildMemberBreakdown(),
                     const SizedBox(height: 16),
                   ],
-
-                  // Success banner
                   if (_squadSentSuccessfully) _buildSuccessBanner(),
-
-                  // Available contacts
-                  _buildLabel('Drag friends into squad 👆'),
+                  _buildLabel('Tap or drag friends to add 👆'),
                   const SizedBox(height: 10),
                   _buildContactGrid(),
                 ],
               ),
             ),
           ),
-
-          // Summary footer
           if (_squad.isNotEmpty && _total > 0) _buildSummaryFooter(),
         ],
       ),
@@ -174,11 +184,13 @@ class _SplitBillScreenState extends State<SplitBillScreen>
       decoration: InputDecoration(
         hintText: 'Squad name (e.g. "Goa Trip 🌴")',
         hintStyle: GoogleFonts.inter(color: kTextMuted, fontSize: 15),
-        prefixIcon: const Icon(Icons.group_rounded, color: kTextMuted, size: 20),
+        prefixIcon:
+            const Icon(Icons.group_rounded, color: kTextMuted, size: 20),
         filled: true,
         fillColor: kSurface1,
         border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide.none),
         enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
             borderSide: const BorderSide(color: kDivider)),
@@ -196,15 +208,21 @@ class _SplitBillScreenState extends State<SplitBillScreen>
         children: [
           Text('₹',
               style: GoogleFonts.inter(
-                  color: kTextSecondary, fontSize: 22, fontWeight: FontWeight.w500)),
+                  color: kTextSecondary,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w500)),
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
               controller: _totalCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              onChanged: (v) => setState(() => _total = double.tryParse(v) ?? 0),
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              onChanged: (v) =>
+                  setState(() => _total = double.tryParse(v) ?? 0),
               style: GoogleFonts.inter(
-                  color: kTextPrimary, fontSize: 22, fontWeight: FontWeight.w600),
+                  color: kTextPrimary,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w600),
               decoration: InputDecoration(
                 hintText: '0.00',
                 hintStyle:
@@ -244,9 +262,7 @@ class _SplitBillScreenState extends State<SplitBillScreen>
                 : kSurface1.withValues(alpha: 0.7),
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: _isHoveringDrop
-                  ? kGreen
-                  : kDivider,
+              color: _isHoveringDrop ? kGreen : kDivider,
               width: _isHoveringDrop ? 1.5 : 1,
             ),
           ),
@@ -255,12 +271,16 @@ class _SplitBillScreenState extends State<SplitBillScreen>
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(Icons.person_add_rounded,
-                        color: _isHoveringDrop ? kGreen : kTextMuted, size: 28),
+                        color:
+                            _isHoveringDrop ? kGreen : kTextMuted,
+                        size: 28),
                     const SizedBox(height: 8),
                     Text(
-                      'Drag friends here to add to squad',
+                      'Drag or tap friends to add to squad',
                       style: GoogleFonts.inter(
-                          color: _isHoveringDrop ? kGreen : kTextMuted,
+                          color: _isHoveringDrop
+                              ? kGreen
+                              : kTextMuted,
                           fontSize: 13),
                     ),
                   ],
@@ -285,8 +305,8 @@ class _SplitBillScreenState extends State<SplitBillScreen>
                         label: Text(m.name.split(' ')[0],
                             style: GoogleFonts.inter(
                                 color: kTextPrimary, fontSize: 12)),
-                        deleteIcon: const Icon(Icons.close,
-                            size: 14, color: kTextMuted),
+                        deleteIcon:
+                            const Icon(Icons.close, size: 14, color: kTextMuted),
                         onDeleted: () => _removeFromSquad(idx),
                         backgroundColor: kSurface2,
                         side: const BorderSide(color: kDivider),
@@ -314,7 +334,10 @@ class _SplitBillScreenState extends State<SplitBillScreen>
           _SplitTab(
             label: '⚖️  Equal Split',
             active: _splitMode == 0,
-            onTap: () => setState(() { _splitMode = 0; _rebalancePct(); }),
+            onTap: () => setState(() {
+              _splitMode = 0;
+              _rebalancePct();
+            }),
           ),
           _SplitTab(
             label: '🎯  Custom Split',
@@ -362,11 +385,20 @@ class _SplitBillScreenState extends State<SplitBillScreen>
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(m.name,
-                        style: GoogleFonts.inter(
-                            color: kTextPrimary,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(m.name,
+                            style: GoogleFonts.inter(
+                                color: kTextPrimary,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500)),
+                        if (m.payflowUpiId != null)
+                          Text(m.payflowUpiId!,
+                              style: GoogleFonts.inter(
+                                  color: kTextMuted, fontSize: 11)),
+                      ],
+                    ),
                   ),
                   Text(
                     '₹${share.toStringAsFixed(0)}',
@@ -378,8 +410,8 @@ class _SplitBillScreenState extends State<SplitBillScreen>
                   const SizedBox(width: 6),
                   Text(
                     '(${(pct * 100).toStringAsFixed(0)}%)',
-                    style: GoogleFonts.inter(
-                        color: kTextMuted, fontSize: 11),
+                    style:
+                        GoogleFonts.inter(color: kTextMuted, fontSize: 11),
                   ),
                 ],
               ),
@@ -392,8 +424,8 @@ class _SplitBillScreenState extends State<SplitBillScreen>
                     thumbColor: kGreen,
                     overlayColor: kGreen.withValues(alpha: 0.1),
                     trackHeight: 3,
-                    thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 8),
+                    thumbShape:
+                        const RoundSliderThumbShape(enabledThumbRadius: 8),
                   ),
                   child: Slider(
                     min: 0.05,
@@ -402,7 +434,6 @@ class _SplitBillScreenState extends State<SplitBillScreen>
                     onChanged: (val) {
                       setState(() {
                         _customPct[idx] = val;
-                        // Normalize remaining percentages
                         final remaining = 1.0 - val;
                         final others = _squad.length - 1;
                         if (others > 0) {
@@ -425,7 +456,49 @@ class _SplitBillScreenState extends State<SplitBillScreen>
   }
 
   Widget _buildContactGrid() {
-    final available = mockContacts.where((c) => !_squad.any((m) => m.id == c.id)).toList();
+    if (_loadingContacts) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: CircularProgressIndicator(color: kGreen, strokeWidth: 2),
+        ),
+      );
+    }
+
+    if (_payflowContacts.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: kSurface1.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: kDivider),
+        ),
+        child: Column(
+          children: [
+            const Icon(Icons.people_outline, color: kTextMuted, size: 40),
+            const SizedBox(height: 12),
+            Text(
+              'No PayFlow users found',
+              style: GoogleFonts.inter(
+                  color: kTextPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Invite friends to PayFlow to split bills with them',
+              style: GoogleFonts.inter(color: kTextMuted, fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+
+    final available = _payflowContacts
+        .where((c) => !_squad.any((m) => m.id == c.id))
+        .toList();
+
     return Wrap(
       spacing: 10,
       runSpacing: 10,
@@ -502,8 +575,8 @@ class _SplitBillScreenState extends State<SplitBillScreen>
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text('Equal share',
-                  style: GoogleFonts.inter(
-                      color: kTextMuted, fontSize: 11)),
+                  style:
+                      GoogleFonts.inter(color: kTextMuted, fontSize: 11)),
               Text(
                 '₹${(_total / _squad.length).toStringAsFixed(0)} each',
                 style: GoogleFonts.inter(
@@ -586,6 +659,21 @@ class _ContactAvatar extends StatelessWidget {
             style: GoogleFonts.inter(color: kTextSecondary, fontSize: 10),
             overflow: TextOverflow.ellipsis,
           ),
+          // Show PayFlow badge
+          if (contact.isPayFlowUser)
+            Container(
+              margin: const EdgeInsets.only(top: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: kGreen.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text('PayFlow',
+                  style: GoogleFonts.inter(
+                      color: kGreen,
+                      fontSize: 8,
+                      fontWeight: FontWeight.w600)),
+            ),
         ],
       ),
     );

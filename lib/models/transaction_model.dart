@@ -24,87 +24,81 @@ class TransactionModel {
   });
 
   bool get isCredit => type == TransactionType.credit;
-}
 
-final List<TransactionModel> mockTransactions = [
-  TransactionModel(
-    id: 't1',
-    vendor: 'Apple',
-    category: 'Subscription',
-    amount: 999.0,
-    type: TransactionType.debit,
-    date: DateTime.now().subtract(const Duration(hours: 2)),
-    icon: Icons.apple,
-    iconColor: Colors.white,
-  ),
-  TransactionModel(
-    id: 't2',
-    vendor: 'Swiggy',
-    category: 'Food',
-    amount: 350.0,
-    type: TransactionType.debit,
-    date: DateTime.now().subtract(const Duration(hours: 5)),
-    icon: Icons.fastfood,
-    iconColor: Colors.white,
-  ),
-  TransactionModel(
-    id: 't3',
-    vendor: 'Apple',
-    category: 'Refund',
-    amount: 15000.0,
-    type: TransactionType.credit,
-    date: DateTime.now().subtract(const Duration(days: 1)),
-    icon: Icons.apple,
-    iconColor: Colors.white,
-  ),
-  TransactionModel(
-    id: 't4',
-    vendor: 'Zerodha',
-    category: 'Investment',
-    amount: 5000.0,
-    type: TransactionType.debit,
-    date: DateTime.now().subtract(const Duration(days: 1, hours: 3)),
-    icon: Icons.trending_up,
-    iconColor: const Color(0xFF5B8FF9),
-  ),
-  TransactionModel(
-    id: 't5',
-    vendor: 'Spotify',
-    category: 'Music',
-    amount: 119.0,
-    type: TransactionType.debit,
-    date: DateTime.now().subtract(const Duration(days: 2)),
-    icon: Icons.music_note,
-    iconColor: const Color(0xFF3EE07F),
-  ),
-  TransactionModel(
-    id: 't6',
-    vendor: 'Netflix',
-    category: 'Entertainment',
-    amount: 499.0,
-    type: TransactionType.debit,
-    date: DateTime.now().subtract(const Duration(days: 3)),
-    icon: Icons.play_circle_fill,
-    iconColor: Colors.red,
-  ),
-  TransactionModel(
-    id: 't7',
-    vendor: 'Zomato',
-    category: 'Food',
-    amount: 420.0,
-    type: TransactionType.debit,
-    date: DateTime.now().subtract(const Duration(days: 3, hours: 4)),
-    icon: Icons.delivery_dining,
-    iconColor: const Color(0xFFFF9A3E),
-  ),
-  TransactionModel(
-    id: 't8',
-    vendor: 'Salary',
-    category: 'Income',
-    amount: 85000.00,
-    type: TransactionType.credit,
-    date: DateTime.now().subtract(const Duration(days: 5)),
-    icon: Icons.account_balance,
-    iconColor: const Color(0xFF3DFFC4),
-  ),
-];
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'vendor': vendor,
+        'category': category,
+        'amount': amount,
+        'type': type.name,
+        'date': date.toIso8601String(),
+      };
+
+  factory TransactionModel.fromJson(Map<String, dynamic> json) {
+    final typeStr = json['type'] as String? ?? 'debit';
+    final type = TransactionType.values.firstWhere(
+      (e) => e.name == typeStr,
+      orElse: () => TransactionType.debit,
+    );
+    final category = json['category'] as String? ?? 'Transfer';
+    return TransactionModel(
+      id: json['id'] as String? ?? '',
+      vendor: json['vendor'] as String? ?? '',
+      category: category,
+      amount: (json['amount'] as num?)?.toDouble() ?? 0.0,
+      type: type,
+      date: DateTime.tryParse(json['date'] as String? ?? '') ?? DateTime.now(),
+      icon: _iconForCategory(category, type),
+      iconColor: _colorForCategory(category, type),
+    );
+  }
+
+  static IconData _iconForCategory(String category, TransactionType type) {
+    if (type == TransactionType.credit) {
+      switch (category) {
+        case 'Income':
+          return Icons.account_balance;
+        case 'Add Money':
+          return Icons.add_circle_outline;
+        default:
+          return Icons.south_west_rounded;
+      }
+    }
+    switch (category) {
+      case 'Food':
+        return Icons.fastfood;
+      case 'Entertainment':
+        return Icons.play_circle_fill;
+      case 'Music':
+        return Icons.music_note;
+      case 'Investment':
+        return Icons.trending_up;
+      case 'Subscription':
+        return Icons.subscriptions_outlined;
+      case 'Split':
+        return Icons.people_outline;
+      default:
+        return Icons.send_rounded;
+    }
+  }
+
+  static Color _colorForCategory(String category, TransactionType type) {
+    if (type == TransactionType.credit) {
+      return const Color(0xFF3DFFC4);
+    }
+    switch (category) {
+      case 'Food':
+        return const Color(0xFFFF9A3E);
+      case 'Entertainment':
+        return Colors.red;
+      case 'Music':
+        return const Color(0xFF3EE07F);
+      case 'Investment':
+        return const Color(0xFF5B8FF9);
+      case 'Split':
+        return const Color(0xFFCB72FF);
+      default:
+        return Colors.white;
+    }
+  }
+}

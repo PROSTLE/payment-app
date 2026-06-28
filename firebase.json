@@ -1,1 +1,26 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"fixitup-c9036","appId":"1:607041989085:android:1f876512f2259420776e34","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"fixitup-c9036","configurations":{"android":"1:607041989085:android:1f876512f2259420776e34","ios":"1:607041989085:ios:1daa88c8a3f9319b776e34","web":"1:607041989085:web:14cdebdf5e6bdb35776e34"}}}}}}
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "fixitup-c9036",
+          "appId": "1:607041989085:android:1f876512f2259420776e34",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "fixitup-c9036",
+          "configurations": {
+            "android": "1:607041989085:android:1f876512f2259420776e34",
+            "ios": "1:607041989085:ios:1daa88c8a3f9319b776e34",
+            "web": "1:607041989085:web:14cdebdf5e6bdb35776e34"
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  }
+}

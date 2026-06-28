@@ -5,6 +5,7 @@ import 'dashboard_screen.dart';
 import 'cards_screen.dart';
 import 'analytics_screen.dart';
 import 'receive_qr_screen.dart';
+import 'split_bill_screen.dart';
 
 class NavigationWrapper extends StatefulWidget {
   const NavigationWrapper({super.key});
@@ -15,7 +16,7 @@ class NavigationWrapper extends StatefulWidget {
 
 class NavigationWrapperState extends State<NavigationWrapper>
     with TickerProviderStateMixin {
-  int _currentIndex = 1;
+  int _currentIndex = 2;
 
   void setIndex(int index) {
     setState(() {
@@ -25,6 +26,7 @@ class NavigationWrapperState extends State<NavigationWrapper>
 
   final List<Widget> _screens = const [
     ReceiveQrScreen(),
+    SplitBillScreen(),
     DashboardScreen(),
     CardsScreen(),
     AnalyticsScreen(),
@@ -52,6 +54,7 @@ class NavigationWrapperState extends State<NavigationWrapper>
   Widget _buildNavBar() {
     final items = [
       _NavItem(icon: Icons.qr_code_scanner, label: 'Scan'),
+      _NavItem(icon: Icons.group_rounded, label: 'Split'),
       _NavItem(icon: Icons.home_rounded, label: 'Home'),
       _NavItem(icon: Icons.credit_card_rounded, label: 'Cards'),
       _NavItem(icon: Icons.bar_chart_rounded, label: 'Analytics'),
@@ -75,10 +78,10 @@ class NavigationWrapperState extends State<NavigationWrapper>
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 20, vertical: 8),
+                    horizontal: 16, vertical: 8),
                 decoration: BoxDecoration(
                   color: selected
-                      ? kGreen.withOpacity(0.12)
+                      ? kGreen.withValues(alpha: 0.12)
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(16),
                 ),
@@ -87,7 +90,7 @@ class NavigationWrapperState extends State<NavigationWrapper>
                   children: [
                     Icon(
                       items[i].icon,
-                      size: 24,
+                      size: 22,
                       color: selected ? kGreen : kTextMuted,
                     ),
                     const SizedBox(height: 3),

@@ -6,6 +6,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../constants/colors.dart';
 import '../models/contact_model.dart';
 import '../services/upi_parser.dart';
+import '../services/auth_service.dart';
 import 'calculator_send_screen.dart';
 import '../widgets/glassmorphic_card.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -20,8 +21,17 @@ class ReceiveQrScreen extends StatefulWidget {
 class _ReceiveQrScreenState extends State<ReceiveQrScreen>
     with SingleTickerProviderStateMixin {
   bool _scanMode = false;
-  final String _upiId = 'payflow@upi';
   bool _copied = false;
+
+  String get _upiId {
+    final user = AuthService.instance.currentUser;
+    return user?.upiId ?? 'payflow@upi';
+  }
+
+  String get _userName {
+    final user = AuthService.instance.currentUser;
+    return user?.fullName ?? 'PayFlow User';
+  }
 
   final MobileScannerController _cameraController = MobileScannerController(
     detectionSpeed: DetectionSpeed.noDuplicates,
@@ -116,7 +126,7 @@ class _ReceiveQrScreenState extends State<ReceiveQrScreen>
                   ),
                   padding: const EdgeInsets.all(16),
                   child: QrImageView(
-                    data: 'upi://pay?pa=$_upiId&pn=PayFlow+User',
+                    data: 'upi://pay?pa=$_upiId&pn=${Uri.encodeComponent(_userName)}',
                     version: QrVersions.auto,
                     size: 200,
                     backgroundColor: Colors.white,
@@ -130,7 +140,7 @@ class _ReceiveQrScreenState extends State<ReceiveQrScreen>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'PayFlow User',
+                  _userName,
                   style: GoogleFonts.inter(
                     color: kTextPrimary,
                     fontSize: 18,
@@ -240,87 +250,126 @@ class _ReceiveQrScreenState extends State<ReceiveQrScreen>
   }
 
   Widget _buildScanView() {
-    return Column(
-      children: [
-        const SizedBox(height: 20),
-        Text(
-          'Scan to Pay',
-          style: GoogleFonts.inter(
-              color: kTextPrimary, fontSize: 24, fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Point your camera at any UPI QR code',
-          style: GoogleFonts.inter(color: kTextSecondary, fontSize: 15),
-        ),
-        const SizedBox(height: 40),
-        Container(
-          width: 280,
-          height: 280,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(32),
-            border: Border.all(color: kGreen.withValues(alpha: 0.5), width: 2),
-            boxShadow: greenGlow(blur: 20),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(30),
-            child: MobileScanner(
-              controller: _cameraController,
-              errorBuilder: (context, error, child) {
-                return GestureDetector(
-                  onTap: () {
-                    _handleScan('upi://pay?pa=mock@upi&pn=Mock%20Merchant&am=100');
-                  },
-                  child: Container(
-                    color: kSurface1,
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.videocam_off_outlined, size: 48, color: kRed),
-                            const SizedBox(height: 12),
-                            Text(
-                              'Camera not available',
-                              style: GoogleFonts.inter(color: kTextPrimary, fontSize: 14, fontWeight: FontWeight.w600),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'Tap here to mock scan',
-                              style: GoogleFonts.inter(color: kGreen, fontSize: 13, fontWeight: FontWeight.bold),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Adapt QR box size to available height — leave room for text + buttons
+        final availH = constraints.maxHeight;
+        final qrSize = (availH - 200).clamp(160.0, 280.0);
+        final vGap = (availH < 500) ? 16.0 : 32.0;
+
+        return SingleChildScrollView(
+          physics: const NeverScrollableScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: availH),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(height: vGap),
+                Text(
+                  'Scan to Pay',
+                  style: GoogleFonts.inter(
+                      color: kTextPrimary,
+                      fontSize: availH < 500 ? 20 : 24,
+                      fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Point your camera at any UPI QR code',
+                  style: GoogleFonts.inter(color: kTextSecondary, fontSize: 13),
+                ),
+                SizedBox(height: vGap),
+                Container(
+                  width: qrSize,
+                  height: qrSize,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(32),
+                    border:
+                        Border.all(color: kGreen.withValues(alpha: 0.5), width: 2),
+                    boxShadow: greenGlow(blur: 20),
                   ),
-                );
-              },
-              onDetect: (capture) {
-                final List<Barcode> barcodes = capture.barcodes;
-                for (final barcode in barcodes) {
-                  if (barcode.rawValue != null) {
-                    _handleScan(barcode.rawValue!);
-                    break;
-                  }
-                }
-              },
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(30),
+                    child: _buildScannerWidget(),
+                  ),
+                ).animate().scale(duration: 400.ms, curve: Curves.easeOutBack),
+                SizedBox(height: vGap),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const _ScannerAction(
+                        icon: Icons.photo_library_outlined, label: 'Gallery'),
+                    const SizedBox(width: 32),
+                    GestureDetector(
+                      onTap: () => _cameraController.toggleTorch(),
+                      child: const _ScannerAction(
+                          icon: Icons.flash_on_rounded, label: 'Flash'),
+                    ),
+                  ],
+                ).animate(delay: 200.ms).fadeIn(),
+                SizedBox(height: vGap),
+              ],
             ),
           ),
-        ).animate().scale(duration: 400.ms, curve: Curves.easeOutBack),
-        const SizedBox(height: 40),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _ScannerAction(icon: Icons.photo_library_outlined, label: 'Gallery'),
-            const SizedBox(width: 32),
-            _ScannerAction(icon: Icons.flash_on_rounded, label: 'Flash'),
-          ],
-        ).animate(delay: 200.ms).fadeIn(),
-      ],
+        );
+      },
+    );
+  }
+
+
+  Widget _buildScannerWidget() {
+    return MobileScanner(
+      controller: _cameraController,
+      errorBuilder: (context, error, child) {
+        // Clean dark fallback — NO yellow hazard stripes
+        return GestureDetector(
+          onTap: () {
+            _handleScan('upi://pay?pa=mock@upi&pn=Mock%20Merchant&am=100');
+          },
+          child: Container(
+            color: kSurface1,
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: kSurface2,
+                      border: Border.all(color: kDivider),
+                    ),
+                    child: const Icon(Icons.videocam_off_outlined, size: 32, color: kTextMuted),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Camera unavailable',
+                    style: GoogleFonts.inter(
+                        color: kTextPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Tap to simulate scan',
+                    style: GoogleFonts.inter(
+                        color: kGreen, fontSize: 13, fontWeight: FontWeight.w500),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+      onDetect: (capture) {
+        final List<Barcode> barcodes = capture.barcodes;
+        for (final barcode in barcodes) {
+          if (barcode.rawValue != null) {
+            _handleScan(barcode.rawValue!);
+            break;
+          }
+        }
+      },
     );
   }
 
